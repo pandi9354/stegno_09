@@ -1,4 +1,3 @@
-// src/screens/EncodeScreen.js
 import React, { useState } from "react";
 import {
   View,
@@ -9,8 +8,9 @@ import {
   StyleSheet,
   Alert,
   Platform,
+  Dimensions,
+  ScrollView,
 } from "react-native";
-
 
 import { PermissionsAndroid } from "react-native";
 import { launchImageLibrary } from "react-native-image-picker";
@@ -20,7 +20,10 @@ import { encodeEncryptedMessage } from "../utils/lsb";
 import { addSavedFile } from "../utils/savedFiles";
 import { useNavigation } from "@react-navigation/native";
 
-/* ------------------------------------------------------ */
+/* -------------------- SCREEN DIMENSIONS -------------------- */
+const { width, height } = Dimensions.get("window");
+
+/* -------------------- PERMISSIONS -------------------- */
 async function hasAndroidPermission() {
   if (Platform.OS !== "android") return true;
 
@@ -44,28 +47,33 @@ async function hasAndroidPermission() {
   }
 }
 
-/* ------------------------------------------------------ */
+/* -------------------- MAIN COMPONENT -------------------- */
 export default function EncodeScreen() {
   const navigation = useNavigation();
 
   const [message, setMessage] = useState("");
   const [selectedImage, setSelectedImage] = useState(null);
   const [encodedBase64, setEncodedBase64] = useState(null);
-  const [aesKey, setAesKey] = useState(""); // start empty
+  const [aesKey, setAesKey] = useState("");
 
+  /* -------------------- IMAGE PICKER -------------------- */
+  const pickImage = async () => {
+    const granted = await hasAndroidPermission();
+    if (!granted) {
+      Alert.alert("Permission required", "Storage permission denied");
+      return;
+    }
 
-  const pickImage = () => {
     launchImageLibrary(
       { mediaType: "photo", includeBase64: false, quality: 1 },
       (response) => {
         if (response.didCancel) return;
         if (response.errorCode) {
-          Alert.alert("Picker error", response.errorMessage || "Unknown");
+          Alert.alert("Picker error", response.errorMessage || "Unknown error");
           return;
         }
 
         const asset = response.assets[0];
-
         setSelectedImage({
           uri: asset.uri,
           type: asset.type,
@@ -77,6 +85,7 @@ export default function EncodeScreen() {
     );
   };
 
+  /* -------------------- ENSURE PNG -------------------- */
   async function ensurePngBase64(asset) {
     let uri = asset.uri;
 
@@ -96,11 +105,14 @@ export default function EncodeScreen() {
       uri = converted.uri;
     }
 
-    const path = uri.startsWith("file://") ? uri.replace("file://", "") : uri;
-    const base64 = await RNFS.readFile(path, "base64");
-    return base64;
+    const path = uri.startsWith("file://")
+      ? uri.replace("file://", "")
+      : uri;
+
+    return await RNFS.readFile(path, "base64");
   }
 
+  /* -------------------- ENCODE -------------------- */
   const encodeNow = async () => {
     if (!selectedImage) {
       Alert.alert("Select Image", "Please pick an image first.");
@@ -115,19 +127,22 @@ export default function EncodeScreen() {
       return;
     }
 
-
     try {
       const base64Png = await ensurePngBase64(selectedImage);
-
-      const outBase64 = encodeEncryptedMessage(base64Png, message, aesKey);
-
+      const outBase64 = encodeEncryptedMessage(
+        base64Png,
+        message,
+        aesKey
+      );
+      console.log("Encoded base64 length:", outBase64?.length);
       setEncodedBase64(outBase64);
-      Alert.alert("Success", "Message encoded.");
+      Alert.alert("Success", "Message encoded successfully.");
     } catch (err) {
       Alert.alert("Encoding error", err.message);
     }
   };
 
+  /* -------------------- SAVE FILE -------------------- */
   const saveToAppFolder = async () => {
     if (!encodedBase64) {
       Alert.alert("No encoded image", "Encode an image first.");
@@ -135,13 +150,11 @@ export default function EncodeScreen() {
     }
 
     try {
-      // Private app folder
       const filename = `stego_${Date.now()}.png`;
       const filePath = `${RNFS.DocumentDirectoryPath}/${filename}`;
 
       await RNFS.writeFile(filePath, encodedBase64, "base64");
 
-      // Save metadata
       await addSavedFile({
         filename,
         path: filePath,
@@ -149,105 +162,152 @@ export default function EncodeScreen() {
       });
 
       Alert.alert("Saved", "Image stored inside app.");
-
     } catch (err) {
       Alert.alert("Save error", err.message);
     }
   };
 
- return (
-  <View style={styles.container}>
-    <Text style={styles.title}>Encode Message</Text>
+  /* -------------------- UI -------------------- */
+  return (
+    <ScrollView
+  style={{ flex: 1 }}
+  contentContainerStyle={styles.container}
+  keyboardShouldPersistTaps="handled"
+>
+      <Text style={styles.title}>Encode Message</Text>
 
-    <TouchableOpacity style={styles.btn} onPress={pickImage}>
-      <Text style={styles.btnText}>Pick Image</Text>
-    </TouchableOpacity>
+      <TouchableOpacity style={styles.btn} onPress={pickImage}>
+        <Text style={styles.btnText}>Pick Image</Text>
+      </TouchableOpacity>
 
-    {selectedImage && (
-      <Image source={{ uri: selectedImage.uri }} style={styles.preview} />
-    )}
+      {selectedImage && (
+        <Image source={{ uri: selectedImage.uri }} style={styles.preview} />
+      )}
 
-    <TextInput
-      style={styles.input}
-      placeholder="Secret message"
-      value={message}
-      onChangeText={setMessage}
-      multiline
-    />
+      <TextInput
+        style={styles.input}
+        placeholder="Secret message"
+        value={message}
+        onChangeText={setMessage}
+        multiline
+      />
 
-    {/* AES Key Input (RESTORED) */}
-    <TextInput
-      style={styles.input}
-      placeholder="AES Secret Key"
-      value={aesKey}
-      onChangeText={setAesKey}
-    />
+      <TextInput
+        style={styles.input}
+        placeholder="AES Secret Key"
+        value={aesKey}
+        onChangeText={setAesKey}
+        secureTextEntry
+      />
 
-    <TouchableOpacity style={styles.encodeBtn} onPress={encodeNow}>
-      <Text style={styles.encodeText}>Encode</Text>
-    </TouchableOpacity>
+      <TouchableOpacity style={styles.encodeBtn} onPress={encodeNow}>
+        <Text style={styles.encodeText}>Encode</Text>
+      </TouchableOpacity>
 
-    {encodedBase64 && (
-      <>
-        <Text style={styles.sectionTitle}>Preview:</Text>
+      {encodedBase64 && (
+        <>
+          {/* <Text style={styles.sectionTitle}>Preview</Text>
 
-        <Image
-          source={{ uri: `data:image/png;base64,${encodedBase64}` }}
-          style={styles.preview}
-        />
+          <Image
+            source={{ uri: `data:image/png;base64,${encodedBase64}` }}
+            style={styles.preview}
+          /> */}
 
-        <TouchableOpacity style={styles.saveBtn} onPress={saveToAppFolder}>
-          <Text style={styles.saveText}>Save to App Storage</Text>
-        </TouchableOpacity>
+          <TouchableOpacity style={styles.saveBtn} onPress={saveToAppFolder}>
+            <Text style={styles.saveText}>Save to App Storage</Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.saveBtn, { backgroundColor: "#34495e" }]}
-          onPress={() => navigation.navigate("SavedFiles")}
-        >
-          <Text style={styles.saveText}>View Saved Files</Text>
-        </TouchableOpacity>
-      </>
-    )}
-  </View>
-);
-
+          <TouchableOpacity
+            style={[styles.saveBtn, { backgroundColor: "#34495e" }]}
+            onPress={() => navigation.navigate("SavedFiles")}
+          >
+            <Text style={styles.saveText}>View Saved Files</Text>
+          </TouchableOpacity>
+        </>
+      )}
+    </ScrollView>
+  );
 }
 
-/* ------------------------------------------------------ */
-
+/* -------------------- STYLES -------------------- */
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 18, backgroundColor: "#fff" },
-  title: { fontSize: 20, fontWeight: "700", marginBottom: 12 },
+  container: {
+    flex: 1,
+    backgroundColor: "#fff",
+    paddingHorizontal: width * 0.05,
+    paddingTop: height * 0.02,
+  },
+
+  title: {
+    fontSize: width * 0.05,
+    fontWeight: "700",
+    textAlign: "center",
+    marginBottom: height * 0.02,
+  },
+
   btn: {
     backgroundColor: "#2d8cff",
-    padding: 12,
+    paddingVertical: height * 0.015,
     borderRadius: 8,
-    marginBottom: 10,
+    marginBottom: height * 0.015,
   },
-  btnText: { color: "#fff", textAlign: "center", fontWeight: "600" },
+
+  btnText: {
+    color: "#fff",
+    textAlign: "center",
+    fontSize: width * 0.04,
+    fontWeight: "600",
+  },
+
   preview: {
-    width: "100%",
-    height: 260,
+    width: width * 0.9,
+    height: height * 0.3,
+    alignSelf: "center",
     resizeMode: "contain",
     borderRadius: 10,
-    marginVertical: 12,
+    marginVertical: height * 0.02,
   },
+
   input: {
     borderWidth: 1,
     borderColor: "#ddd",
-    padding: 12,
     borderRadius: 8,
-    marginBottom: 12,
+    paddingVertical: height * 0.015,
+    paddingHorizontal: width * 0.03,
+    fontSize: width * 0.04,
+    marginBottom: height * 0.015,
   },
-  encodeBtn: { backgroundColor: "#20bf6b", padding: 14, borderRadius: 10 },
-  encodeText: { color: "#fff", textAlign: "center", fontWeight: "700" },
+
+  encodeBtn: {
+    backgroundColor: "#20bf6b",
+    paddingVertical: height * 0.018,
+    borderRadius: 10,
+  },
+
+  encodeText: {
+    color: "#fff",
+    textAlign: "center",
+    fontSize: width * 0.045,
+    fontWeight: "700",
+  },
+
   saveBtn: {
     backgroundColor: "#4b7bec",
-    padding: 14,
+    paddingVertical: height * 0.018,
     borderRadius: 10,
-    marginTop: 10,
+    marginTop: height * 0.015,
   },
-  saveText: { color: "#fff", textAlign: "center", fontWeight: "600" },
-  sectionTitle: { fontWeight: "600", marginTop: 12 },
+
+  saveText: {
+    color: "#fff",
+    textAlign: "center",
+    fontSize: width * 0.042,
+    fontWeight: "600",
+  },
+
+  sectionTitle: {
+    fontSize: width * 0.042,
+    fontWeight: "600",
+    marginTop: height * 0.02,
+  },
 });
-  
